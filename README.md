@@ -15,8 +15,7 @@ El archivo `sens_data.csv`  y `anten_data.csv` deben estar en el directorio de t
 
 ## Reproducir el análisis
 
-Abrir `SENS.Rmd` y `ANTEN.Rmd`en RStudio y ejecutar todos los chunks en orden, o correr:
-
+Abrir `SENS.Rmd` y `ANTEN.Rmd`en RStudio y ejecutar todos los chunks en orden, o abrir el archivo `TAREAFONTURBELAB.Rproj` para abrir los dos archivos a la vez.
 
 ## Contenido del repositorio
 
