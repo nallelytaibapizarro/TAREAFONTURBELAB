@@ -1,28 +1,75 @@
-# TAREAFONTURBELAB
-# Análisis de sensillas y antenomeros antenales en Euborellia annullipes
+# Caracterización morfométrica y sensorial de antenas en Euborellia annulipes
 
-Comparación de sensillas entre machos y hembras de Euborellia annullipes mediante pruebas no paramétricas y GLMM.
+Análisis estadístico comparativo de la morfometría antenomérica y el equipamiento 
+sensorial entre machos y hembras adultos de *Euborellia annulipes* (Dermaptera: 
+Anisolabididae), mediante microscopía electrónica de barrido (SEM) e imágenes 
+procesadas en Fiji/ImageJ.
+
+**Autora:** Nallely Taiba Pizarro  
+**Curso:** Diseño Experimental y Bioestadística — Magíster en Ciencias Biológicas, PUCV (2026)
+
+---
 
 ## Requisitos
 
-R 4.0 o superior con los siguientes paquetes:
+R 4.5 o superior con los siguientes paquetes:
 
-install.packages(c("tidyverse", "rstatix", "ggpubr", "car", "coin", "glmmTMB"))
+```r
+install.packages(c("tidyverse", "rstatix", "ggpubr", "car", 
+                   "coin", "glmmTMB", "DHARMa", "emmeans"))
+```
+
+---
 
 ## Datos
 
-El archivo `sens_data.csv`  y `anten_data.csv` deben estar en el directorio de trabajo.
+Los archivos `sens_data.csv` y `anten_data.csv` deben estar en la misma 
+carpeta que los scripts `.Rmd`. En RStudio, establecer el directorio de 
+trabajo con:
 
-## Reproducir el análisis
+```r
+Session → Set Working Directory → To Source File Location
+```
 
-Abrir `SENS.Rmd` y `ANTEN.Rmd`en RStudio y ejecutar todos los chunks en orden, o abrir el archivo `TAREAFONTURBELAB.Rproj` para abrir los dos archivos a la vez.
+---
+
+## Cómo reproducir el análisis
+
+Abrir cada archivo `.Rmd` en RStudio y hacer click en **Knit**, 
+en el siguiente orden:
+
+1. `ANTEN.Rmd` — análisis exploratorio de morfometría
+2. `SENS__1_.Rmd` — análisis exploratorio de sensillas + GLMM inicial
+3. `SENS_con_DHARMa.Rmd` — diagnóstico de supuestos con DHARMa
+4. `SENS_binomial_negativa.Rmd` — modelos finales con reajuste por sobredispersión
+
+Alternativamente, abrir `TAREAFONTURBELAB.Rproj` para cargar 
+el proyecto completo en RStudio.
+
+---
 
 ## Contenido del repositorio
 
-- `SENS.Rmd` — código completo del análisis
-- `ANTEN.Rmd` — código completo del análisis
-- `sens_data.csv` — datos de sensillas
-- `anten_data.csv` — datos de sensillas
-- `TAREAFONTURBELAB.Rproj` — Archivo del proyecto en R
-- `ANTEN.html` y `SENS.html` - archivos de visualizacion del codigo en HTML.
-- `README.md` — este archivo
+### Scripts R
+| Archivo | Descripción |
+|---|---|
+| `ANTEN.Rmd` | Morfometría antenomérica: Shapiro-Wilk, Levene, Wilcoxon-BH, modelos lineales (AIC/BIC) |
+| `SENS__1_.Rmd` | Sensillas: Shapiro-Wilk, Wilcoxon-Bonferroni, GLMM Poisson inicial |
+| `SENS_con_DHARMa.Rmd` | Diagnóstico de residuos con DHARMa (uniformidad, sobredispersión, outliers) |
+| `SENS_binomial_negativa.Rmd` | Modelos finales: Poisson (TR) y Binomial Negativa (BS, CH, TOTAL); Wald tipo III; post hoc emmeans |
+
+### Outputs HTML
+| Archivo | Descripción |
+|---|---|
+| `ANTEN.html` | Output del análisis de antenómeros |
+| `SENS__1_.html` | Output del análisis exploratorio de sensillas |
+| `SENS_con_DHARMa.html` | Output del diagnóstico DHARMa |
+| `SENS_binomial_negativa.html` | Output de los modelos finales con binomial negativa |
+
+### Datos y proyecto
+| Archivo | Descripción |
+|---|---|
+| `sens_data.csv` | Conteo de sensillas por flagelómero e individuo |
+| `anten_data.csv` | Mediciones morfométricas por flagelómero e individuo |
+| `TAREAFONTURBELAB.Rproj` | Proyecto RStudio |
+| `README.md` | Este archivo |
