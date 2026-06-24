@@ -1,0 +1,308 @@
+---
+title: "PCA - Morfometría antenomérica Euborellia annulipes"
+author: "Nallely Taiba Pizarro"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+# ── IMPORTANTE ──────────────────────────────────────────────────────────────
+# Guarda este archivo en la misma carpeta que anten_data.csv
+# En RStudio: Session → Set Working Directory → To Source File Location
+# ────────────────────────────────────────────────────────────────────────────
+```
+
+## Librerías
+
+```{r librerias}
+library(tidyverse)
+library(FactoMineR)  # para correr el PCA
+library(factoextra)  # para los gráficos del PCA (screeplot y biplot)
+```
+
+## Cargar y preparar datos
+
+```{r datos}
+data <- read.csv("anten_data.csv", sep = ";", dec = ",")
+
+cols_num <- c("MV1","MV2","MV3","MD1","MD2","MD3",
+              "HV1","HV2","HV3","HD1","HD2","HD3")
+
+data[cols_num] <- lapply(data[cols_num], function(x) {
+  as.numeric(gsub(",", ".", x))
+})
+
+data_long <- data %>%
+  pivot_longer(
+    cols      = all_of(cols_num),
+    names_to  = "individuo",
+    values_to = "valor"
+  ) %>%
+  mutate(
+    sexo       = factor(ifelse(grepl("^M", individuo), "Macho", "Hembra"),
+                        levels = c("Macho", "Hembra")),
+    superficie = factor(ifelse(grepl("V", individuo), "Ventral", "Dorsal"),
+                        levels = c("Dorsal", "Ventral"))
+  )
+
+cat("Dimensiones data_long:", dim(data_long), "\n")
+cat("Variables Set:", unique(data_long$Set), "\n")
+```
+
+## Preparar matriz para PCA
+
+# El PCA necesita una fila por observación (antenómero × individuo)
+# y una columna por variable (LARGO, ANCHO, ÁREA)
+# Pivotamos de formato largo a ancho para tener las 3 variables como columnas
+
+```{r prep_pca}
+# Pivotar: cada fila = un antenómero de un individuo
+# columnas = AREA, LENGTH, WIDTH
+datos_pca <- data_long %>%
+  select(FL, individuo, sexo, superficie, Set, valor) %>%
+  pivot_wider(
+    names_from  = Set,
+    values_from = valor
+  ) %>%
+  filter(!is.na(AREA), !is.na(LENGTH), !is.na(WIDTH))
+
+cat("Filas para PCA:", nrow(datos_pca), "\n")
+cat("Columnas:", names(datos_pca), "\n")
+head(datos_pca)
+```
+
+## Correr el PCA
+
+# Se escalan las variables (scale.unit = TRUE) porque están en distintas unidades
+# (µm para largo y ancho, µm² para área)
+
+```{r pca}
+# Extraer solo las variables numéricas para el PCA
+matriz_pca <- datos_pca %>%
+  select(AREA, LENGTH, WIDTH) %>%
+  as.matrix()
+
+# Correr PCA con FactoMineR (escala automática)
+pca_res <- PCA(matriz_pca,
+               scale.unit = TRUE,  # estandarizar variables
+               graph      = FALSE, # no graficar aún
+               ncp        = 3)     # guardar 3 componentes
+
+# Varianza explicada por componente
+cat("\n── Varianza explicada por componente ──────────────────\n")
+print(pca_res$eig)
+
+# Loadings (contribución de cada variable a cada PC)
+cat("\n── Loadings (coordenadas de las variables) ─────────────\n")
+print(pca_res$var$coord)
+
+# Contribución de cada variable a cada PC (%)
+cat("\n── Contribución de cada variable a cada PC (%) ─────────\n")
+print(pca_res$var$contrib)
+```
+
+## Screeplot — varianza explicada por componente
+
+```{r screeplot, fig.width=7, fig.height=5}
+fviz_eig(pca_res,
+         addlabels = TRUE,
+         ylim      = c(0, 100),
+         barfill   = "#4472C4",
+         barcolor  = "white",
+         linecolor = "#E91E63") +
+  labs(
+    title    = "Screeplot: varianza explicada por componente",
+    subtitle = expression(italic("Euborellia annulipes") ~
+                          "— morfometría antenomérica"),
+    x        = "Componente principal",
+    y        = "Varianza explicada (%)"
+  ) +
+  theme_bw(base_size = 13)
+```
+
+## Biplot coloreado por SEXO
+
+```{r biplot_sexo, fig.width=9, fig.height=7}
+# Añadir las variables de grupo al resultado del PCA
+ind_coords <- as.data.frame(pca_res$ind$coord)
+ind_coords$sexo       <- datos_pca$sexo
+ind_coords$superficie <- datos_pca$superficie
+ind_coords$FL         <- datos_pca$FL
+
+# Varianza explicada para etiquetas de ejes
+var_pc1 <- round(pca_res$eig[1, 2], 1)
+var_pc2 <- round(pca_res$eig[2, 2], 1)
+
+# Biplot por sexo
+p_sexo <- ggplot(ind_coords, aes(x = Dim.1, y = Dim.2, color = sexo)) +
+  geom_point(size = 2.5, alpha = 0.7) +
+  stat_ellipse(aes(fill = sexo), type = "norm",
+               alpha = 0.1, geom = "polygon", level = 0.95) +
+  scale_color_manual(values = c("Macho" = "#2196F3", "Hembra" = "#E91E63")) +
+  scale_fill_manual(values  = c("Macho" = "#2196F3", "Hembra" = "#E91E63")) +
+  # Añadir flechas de variables
+  geom_segment(
+    data = as.data.frame(pca_res$var$coord) %>%
+           rownames_to_column("var") %>%
+           mutate(Dim.1 = Dim.1 * 3, Dim.2 = Dim.2 * 3),  # escala las flechas
+    aes(x = 0, y = 0, xend = Dim.1, yend = Dim.2),
+    arrow = arrow(length = unit(0.3, "cm")),
+    color = "gray30", linewidth = 0.8, inherit.aes = FALSE
+  ) +
+  geom_text(
+    data = as.data.frame(pca_res$var$coord) %>%
+           rownames_to_column("var") %>%
+           mutate(Dim.1 = Dim.1 * 3.3, Dim.2 = Dim.2 * 3.3),
+    aes(x = Dim.1, y = Dim.2, label = var),
+    color = "gray20", size = 4, fontface = "bold", inherit.aes = FALSE
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray70") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray70") +
+  labs(
+    title    = "PCA morfometría antenomérica — por sexo",
+    subtitle = expression(italic("Euborellia annulipes")),
+    x        = paste0("PC1 (", var_pc1, "% varianza)"),
+    y        = paste0("PC2 (", var_pc2, "% varianza)"),
+    color    = "Sexo",
+    fill     = "Sexo"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(legend.position = "right")
+
+print(p_sexo)
+ggsave("PCA_sexo.png", p_sexo, width = 9, height = 7, dpi = 300)
+```
+
+## Biplot coloreado por SUPERFICIE
+
+```{r biplot_superficie, fig.width=9, fig.height=7}
+p_superficie <- ggplot(ind_coords,
+                       aes(x = Dim.1, y = Dim.2, color = superficie)) +
+  geom_point(size = 2.5, alpha = 0.7) +
+  stat_ellipse(aes(fill = superficie), type = "norm",
+               alpha = 0.1, geom = "polygon", level = 0.95) +
+  scale_color_manual(values = c("Dorsal"  = "#FF9800",
+                                "Ventral" = "#9C27B0")) +
+  scale_fill_manual(values  = c("Dorsal"  = "#FF9800",
+                                "Ventral" = "#9C27B0")) +
+  geom_segment(
+    data = as.data.frame(pca_res$var$coord) %>%
+           rownames_to_column("var") %>%
+           mutate(Dim.1 = Dim.1 * 3, Dim.2 = Dim.2 * 3),
+    aes(x = 0, y = 0, xend = Dim.1, yend = Dim.2),
+    arrow = arrow(length = unit(0.3, "cm")),
+    color = "gray30", linewidth = 0.8, inherit.aes = FALSE
+  ) +
+  geom_text(
+    data = as.data.frame(pca_res$var$coord) %>%
+           rownames_to_column("var") %>%
+           mutate(Dim.1 = Dim.1 * 3.3, Dim.2 = Dim.2 * 3.3),
+    aes(x = Dim.1, y = Dim.2, label = var),
+    color = "gray20", size = 4, fontface = "bold", inherit.aes = FALSE
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray70") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray70") +
+  labs(
+    title    = "PCA morfometría antenomérica — por superficie",
+    subtitle = expression(italic("Euborellia annulipes")),
+    x        = paste0("PC1 (", var_pc1, "% varianza)"),
+    y        = paste0("PC2 (", var_pc2, "% varianza)"),
+    color    = "Superficie",
+    fill     = "Superficie"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(legend.position = "right")
+
+print(p_superficie)
+ggsave("PCA_superficie.png", p_superficie, width = 9, height = 7, dpi = 300)
+```
+
+## Biplot coloreado por SEXO × SUPERFICIE
+
+```{r biplot_interaccion, fig.width=10, fig.height=7}
+# Crear variable combinada
+ind_coords <- ind_coords %>%
+  mutate(grupo = paste(sexo, superficie, sep = " - "))
+
+p_interaccion <- ggplot(ind_coords,
+                        aes(x = Dim.1, y = Dim.2, color = grupo)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  stat_ellipse(aes(fill = grupo), type = "norm",
+               alpha = 0.08, geom = "polygon", level = 0.95) +
+  scale_color_manual(values = c(
+    "Macho - Dorsal"   = "#1565C0",
+    "Macho - Ventral"  = "#42A5F5",
+    "Hembra - Dorsal"  = "#C62828",
+    "Hembra - Ventral" = "#EF9A9A"
+  )) +
+  scale_fill_manual(values = c(
+    "Macho - Dorsal"   = "#1565C0",
+    "Macho - Ventral"  = "#42A5F5",
+    "Hembra - Dorsal"  = "#C62828",
+    "Hembra - Ventral" = "#EF9A9A"
+  )) +
+  geom_segment(
+    data = as.data.frame(pca_res$var$coord) %>%
+           rownames_to_column("var") %>%
+           mutate(Dim.1 = Dim.1 * 3, Dim.2 = Dim.2 * 3),
+    aes(x = 0, y = 0, xend = Dim.1, yend = Dim.2),
+    arrow = arrow(length = unit(0.3, "cm")),
+    color = "gray30", linewidth = 0.8, inherit.aes = FALSE
+  ) +
+  geom_text(
+    data = as.data.frame(pca_res$var$coord) %>%
+           rownames_to_column("var") %>%
+           mutate(Dim.1 = Dim.1 * 3.3, Dim.2 = Dim.2 * 3.3),
+    aes(x = Dim.1, y = Dim.2, label = var),
+    color = "gray20", size = 4, fontface = "bold", inherit.aes = FALSE
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray70") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray70") +
+  labs(
+    title    = "PCA morfometría antenomérica — por sexo y superficie",
+    subtitle = expression(italic("Euborellia annulipes")),
+    x        = paste0("PC1 (", var_pc1, "% varianza)"),
+    y        = paste0("PC2 (", var_pc2, "% varianza)"),
+    color    = "Grupo",
+    fill     = "Grupo"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(legend.position = "right")
+
+print(p_interaccion)
+ggsave("PCA_interaccion.png", p_interaccion, width = 10, height = 7, dpi = 300)
+```
+
+## Resumen numérico del PCA
+
+```{r resumen_pca}
+cat("\n══════════════════════════════════════════════════════\n")
+cat("  RESUMEN PCA — MORFOMETRÍA ANTENOMÉRICA\n")
+cat("══════════════════════════════════════════════════════\n\n")
+
+cat("── Varianza explicada ──────────────────────────────\n")
+eig <- pca_res$eig
+cat(sprintf("  PC1: %.1f%%\n", eig[1,2]))
+cat(sprintf("  PC2: %.1f%%\n", eig[2,2]))
+cat(sprintf("  PC3: %.1f%%\n", eig[3,2]))
+cat(sprintf("  PC1+PC2 acumulado: %.1f%%\n\n", eig[2,3]))
+
+cat("── Contribución de variables a PC1 ─────────────────\n")
+contrib <- pca_res$var$contrib
+cat(sprintf("  AREA:   %.1f%%\n", contrib["AREA",   "Dim.1"]))
+cat(sprintf("  LENGTH: %.1f%%\n", contrib["LENGTH", "Dim.1"]))
+cat(sprintf("  WIDTH:  %.1f%%\n\n", contrib["WIDTH",  "Dim.1"]))
+
+cat("── Contribución de variables a PC2 ─────────────────\n")
+cat(sprintf("  AREA:   %.1f%%\n", contrib["AREA",   "Dim.2"]))
+cat(sprintf("  LENGTH: %.1f%%\n", contrib["LENGTH", "Dim.2"]))
+cat(sprintf("  WIDTH:  %.1f%%\n\n", contrib["WIDTH",  "Dim.2"]))
+
+cat("── Interpretación esperada ──────────────────────────\n")
+cat("  PC1 probablemente representa TAMAÑO GENERAL\n")
+cat("  (todas las variables correlacionadas positivamente)\n")
+cat("  PC2 probablemente representa FORMA\n")
+cat("  (contraste largo vs ancho/area)\n")
+```
