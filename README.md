@@ -16,7 +16,8 @@ R 4.5 o superior con los siguientes paquetes:
 
 ```r
 install.packages(c("tidyverse", "rstatix", "ggpubr", "car", 
-                   "coin", "glmmTMB", "DHARMa", "emmeans"))
+                   "coin", "glmmTMB", "DHARMa", "emmeans",
+                   "FactoMineR", "factoextra"))
 ```
 
 ---
@@ -39,9 +40,10 @@ Abrir cada archivo `.Rmd` en RStudio y hacer click en **Knit**,
 en el siguiente orden:
 
 1. `ANTEN.Rmd` — análisis exploratorio de morfometría
-2. `SENS__1_.Rmd` — análisis exploratorio de sensillas + GLMM inicial
-3. `SENS_con_DHARMa.Rmd` — diagnóstico de supuestos con DHARMa
-4. `SENS_binomial_negativa.Rmd` — modelos finales con reajuste por sobredispersión
+2. `PCA_morfometria.Rmd` — análisis multivariado de morfometría
+3. `SENS__1_.Rmd` — análisis exploratorio de sensillas + GLMM inicial
+4. `SENS_con_DHARMa.Rmd` — diagnóstico de supuestos con DHARMa
+5. `SENS_binomial_negativa.Rmd` — modelos finales con reajuste por sobredispersión
 
 Alternativamente, abrir `TAREAFONTURBELAB.Rproj` para cargar 
 el proyecto completo en RStudio.
@@ -51,25 +53,31 @@ el proyecto completo en RStudio.
 ## Contenido del repositorio
 
 ### Scripts R
+
 | Archivo | Descripción |
 |---|---|
 | `ANTEN.Rmd` | Morfometría antenomérica: Shapiro-Wilk, Levene, Wilcoxon-BH, modelos lineales (AIC/BIC) |
+| `PCA_morfometria.Rmd` | PCA de morfometría: varianza explicada por componente, biplots por sexo, superficie e interacción |
 | `SENS__1_.Rmd` | Sensillas: Shapiro-Wilk, Wilcoxon-Bonferroni, GLMM Poisson inicial |
 | `SENS_con_DHARMa.Rmd` | Diagnóstico de residuos con DHARMa (uniformidad, sobredispersión, outliers) |
 | `SENS_binomial_negativa.Rmd` | Modelos finales: Poisson (TR) y Binomial Negativa (BS, CH, TOTAL); Wald tipo III; post hoc emmeans |
 
 ### Outputs HTML
+
 | Archivo | Descripción |
 |---|---|
-| `ANTEN.html` | Output del análisis de antenómeros |
+| `ANTEN.html` | Output del análisis exploratorio de morfometría |
+| `PCA_morfometria.html` | Output del PCA con resultados numéricos y biplots |
 | `SENS__1_.html` | Output del análisis exploratorio de sensillas |
 | `SENS_con_DHARMa.html` | Output del diagnóstico DHARMa |
 | `SENS_binomial_negativa.html` | Output de los modelos finales con binomial negativa |
 
 ### Datos y proyecto
+
 | Archivo | Descripción |
 |---|---|
 | `sens_data.csv` | Conteo de sensillas por flagelómero e individuo |
 | `anten_data.csv` | Mediciones morfométricas por flagelómero e individuo |
 | `TAREAFONTURBELAB.Rproj` | Proyecto RStudio |
 | `README.md` | Este archivo |
+
