@@ -1,5 +1,5 @@
 # TAREAFONTURBELAB
-# Análisis de Sensillas Antenales
+# Análisis de sensillas y antenomeros antenales en Euborellia annullipes
 
 Comparación de sensillas entre machos y hembras de Euborellia annullipes mediante pruebas no paramétricas y GLMM.
 
