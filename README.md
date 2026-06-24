@@ -21,7 +21,9 @@ Abrir `SENS.Rmd` y `ANTEN.Rmd`en RStudio y ejecutar todos los chunks en orden, o
 ## Contenido del repositorio
 
 - `SENS.Rmd` — código completo del análisis
-- - `ANTEN.Rmd` — código completo del análisis
+- `ANTEN.Rmd` — código completo del análisis
 - `sens_data.csv` — datos de sensillas
-- - `anten_data.csv` — datos de sensillas
+- `anten_data.csv` — datos de sensillas
+- `TAREAFONTURBELAB.Rproj` — Archivo del proyecto en R
+- `ANTEN.html` y `SENS.html` - archivos de visualizacion del codigo en HTML.
 - `README.md` — este archivo
