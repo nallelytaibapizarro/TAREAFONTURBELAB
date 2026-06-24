@@ -1,0 +1,264 @@
+---
+title: "Sensillas - con diagnóstico DHARMa"
+author: "Nallely Taiba Pizarro"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+# ── IMPORTANTE ──────────────────────────────────────────────────────────────
+# Guarda este archivo en la misma carpeta que sens_data.csv
+# Por ejemplo: C:\Users\Lenovo\Downloads\
+# Luego en RStudio: Session → Set Working Directory → To Source File Location
+# ────────────────────────────────────────────────────────────────────────────
+```
+
+## Cargamos librerías
+
+```{r librerias}
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(car)
+library(coin)
+library(glmmTMB)
+library(DHARMa)   # <-- nuevo: diagnóstico de residuos para GLMM
+```
+
+## Cargamos los datos
+
+```{r datos}
+data <- read.csv2("sens_data.csv", sep = ";", header = TRUE)
+```
+
+## Preparamos la matriz
+
+```{r preparacion}
+cat("Dimensiones:", dim(data), "\n")
+cat("Columnas:", names(data), "\n")
+
+flagelomeros <- names(data)[3:ncol(data)]
+cat("Flagelómeros detectados:", flagelomeros, "\n")
+
+data_long <- data %>%
+  pivot_longer(
+    cols      = all_of(flagelomeros),
+    names_to  = "flagelomero",
+    values_to = "n_sensillas"
+  ) %>%
+  mutate(
+    sexo        = case_when(
+      str_starts(ID, "M") ~ "Macho",
+      str_starts(ID, "H") ~ "Hembra"
+    ),
+    flagelomero = factor(flagelomero, levels = flagelomeros),
+    sexo        = factor(sexo, levels = c("Macho", "Hembra")),
+    sens_type   = factor(sens_type)
+  )
+```
+
+## Estadística descriptiva
+
+```{r descriptiva}
+descriptive <- data_long %>%
+  group_by(sexo, sens_type) %>%
+  summarise(
+    n       = n(),
+    media   = mean(n_sensillas, na.rm = TRUE),
+    mediana = median(n_sensillas, na.rm = TRUE),
+    DE      = sd(n_sensillas, na.rm = TRUE),
+    min     = min(n_sensillas, na.rm = TRUE),
+    max     = max(n_sensillas, na.rm = TRUE),
+    .groups = "drop"
+  )
+print(descriptive)
+
+descriptive_flag <- data_long %>%
+  group_by(sexo, sens_type, flagelomero) %>%
+  summarise(
+    media = mean(n_sensillas, na.rm = TRUE),
+    DE    = sd(n_sensillas, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+## Prueba de normalidad (Shapiro-Wilk)
+
+```{r normalidad}
+normalidad <- data_long %>%
+  group_by(sexo, sens_type) %>%
+  shapiro_test(n_sensillas)
+print(normalidad)
+```
+
+## Análisis exploratorio: Wilcoxon-Mann-Whitney
+
+```{r wilcoxon}
+wilcoxon <- data_long %>%
+  group_by(sens_type) %>%
+  rstatix::wilcox_test(n_sensillas ~ sexo) %>%
+  rstatix::adjust_pvalue(method = "bonferroni") %>%
+  rstatix::add_significance()
+
+print(wilcoxon %>% select(sens_type, statistic, p, p.adj, p.adj.signif))
+
+ef <- data_long %>%
+  group_by(sens_type) %>%
+  rstatix::wilcox_effsize(n_sensillas ~ sexo)
+
+print(ef %>% select(sens_type, effsize, magnitude))
+```
+
+## Gráficos exploratorios
+
+```{r graficos}
+p1 <- data_long %>%
+  ggplot(aes(x = sexo, y = n_sensillas, fill = sexo)) +
+  geom_boxplot(outlier.shape = 21, alpha = 0.8) +
+  geom_jitter(width = 0.15, alpha = 0.3, size = 0.8) +
+  facet_wrap(~sens_type, scales = "free_y") +
+  scale_fill_manual(values = c("Macho" = "#4472C4", "Hembra" = "#ED7D31")) +
+  stat_compare_means(method = "wilcox.test", label = "p.signif",
+                     comparisons = list(c("Macho", "Hembra"))) +
+  labs(title = "Comparación de sensillas: Machos vs Hembras",
+       x = NULL, y = "Número de sensillas", fill = "Sexo") +
+  theme_bw(base_size = 13) +
+  theme(legend.position = "bottom")
+print(p1)
+
+p2 <- descriptive_flag %>%
+  ggplot(aes(x = flagelomero, y = media, color = sexo, group = sexo)) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2) +
+  geom_ribbon(aes(ymin = media - DE, ymax = media + DE, fill = sexo),
+              alpha = 0.15, color = NA) +
+  facet_wrap(~sens_type, scales = "free_y") +
+  scale_color_manual(values = c("Macho" = "#4472C4", "Hembra" = "#ED7D31")) +
+  scale_fill_manual(values  = c("Macho" = "#4472C4", "Hembra" = "#ED7D31")) +
+  labs(title = "Sensillas por sección",
+       x = "Flagelómero", y = "Número de sensillas",
+       color = "Sexo", fill = "Sexo") +
+  theme_bw(base_size = 13) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom")
+print(p2)
+```
+
+## Preparación para GLMM
+
+```{r prep_glmm}
+sens <- read.csv("sens_data.csv", sep = ";", header = TRUE)
+
+flagelomeros <- names(sens)[3:ncol(sens)]
+
+sens_long <- pivot_longer(sens,
+                          cols      = all_of(flagelomeros),
+                          names_to  = "flagelomero",
+                          values_to = "n_sensillas")
+
+sens_long$sexo      <- ifelse(grepl("^M", sens_long$ID), "Macho", "Hembra")
+sens_long$vista     <- ifelse(grepl("V", sens_long$ID), "Ventral", "Dorsal")
+sens_long$individuo <- paste0(
+                         ifelse(grepl("^M", sens_long$ID), "M", "H"),
+                         gsub("[^0-9]", "", sens_long$ID))
+
+sens_long$sexo        <- factor(sens_long$sexo,        levels = c("Macho", "Hembra"))
+sens_long$vista       <- factor(sens_long$vista,       levels = c("Ventral", "Dorsal"))
+sens_long$flagelomero <- factor(sens_long$flagelomero, levels = flagelomeros)
+sens_long$sens_type   <- factor(sens_long$sens_type)
+
+head(sens_long)
+```
+
+## GLMM Poisson por tipo de sensilla
+
+```{r glmm}
+modelos_glmm <- list()  # guardamos los modelos para DHARMa después
+
+for (tipo in levels(sens_long$sens_type)) {
+
+  sub <- sens_long[sens_long$sens_type == tipo, ]
+
+  modelo <- glmmTMB(n_sensillas ~ sexo * vista + flagelomero + (1 | individuo),
+                    data   = sub,
+                    family = poisson)
+
+  modelos_glmm[[tipo]] <- modelo  # guardar para diagnóstico
+
+  cat("\n============================================================\n")
+  cat(sprintf("  GLMM - Tipo: %s\n", tipo))
+  cat("============================================================\n")
+  print(summary(modelo))
+}
+```
+
+## Diagnóstico de supuestos con DHARMa
+
+# Para cada tipo de sensilla se evalúa:
+# - Uniformidad de residuos (prueba KS): si p > 0.05 el modelo ajusta bien
+# - Sobredispersión: si p < 0.05 la varianza real supera la esperada bajo
+#   Poisson y habría que cambiar a distribución binomial negativa
+# - Outliers: observaciones extremas influyentes
+
+```{r dharma, fig.width=10, fig.height=5}
+tabla_dharma <- data.frame(
+  Tipo          = character(),
+  KS_stat       = numeric(),
+  KS_p          = numeric(),
+  Dispersion_ratio = numeric(),
+  Dispersion_p  = numeric(),
+  Outliers_p    = numeric(),
+  Conclusion    = character(),
+  stringsAsFactors = FALSE
+)
+
+for (tipo in levels(sens_long$sens_type)) {
+
+  cat("\n", rep("─", 55), "\n")
+  cat("  DHARMa diagnóstico:", tipo, "\n")
+  cat(rep("─", 55), "\n")
+
+  mod     <- modelos_glmm[[tipo]]
+  sim_res <- simulateResiduals(fittedModel = mod, n = 500, plot = FALSE)
+
+  # Gráficos QQ y residuos vs predichos
+  par(mfrow = c(1, 2))
+  plotQQunif(sim_res,    main = paste("QQ-plot:", tipo))
+  plotResiduals(sim_res, main = paste("Residuos vs Predichos:", tipo))
+  par(mfrow = c(1, 1))
+
+  # Tests formales
+  test_unif <- testUniformity(sim_res,  plot = FALSE)
+  test_disp <- testDispersion(sim_res,  plot = FALSE)
+  test_out  <- testOutliers(sim_res,    plot = FALSE)
+
+  cat("\n  >> Test de uniformidad (KS):\n")
+  cat(sprintf("     D = %.4f,  p = %.4f\n", test_unif$statistic, test_unif$p.value))
+
+  cat("\n  >> Test de sobredispersión:\n")
+  cat(sprintf("     ratio = %.4f,  p = %.4f\n", test_disp$statistic, test_disp$p.value))
+
+  cat("\n  >> Test de outliers:\n")
+  cat(sprintf("     p = %.4f\n", test_out$p.value))
+
+  conclusion <- ifelse(test_disp$p.value < 0.05,
+                       "SOBREDISPERSIÓN → reajustar con Binomial Negativa",
+                       "Sin sobredispersión → Poisson adecuado")
+  cat("\n  >> Conclusión:", conclusion, "\n")
+
+  tabla_dharma <- rbind(tabla_dharma, data.frame(
+    Tipo             = tipo,
+    KS_stat          = round(test_unif$statistic, 4),
+    KS_p             = round(test_unif$p.value,   4),
+    Dispersion_ratio = round(test_disp$statistic, 4),
+    Dispersion_p     = round(test_disp$p.value,   4),
+    Outliers_p       = round(test_out$p.value,    4),
+    Conclusion       = conclusion
+  ))
+}
+
+cat("\n\n── TABLA RESUMEN DHARMa ──────────────────────────────────\n")
+print(tabla_dharma)
+```

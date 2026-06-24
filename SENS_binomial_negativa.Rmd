@@ -1,0 +1,272 @@
+---
+title: "Sensillas - GLMM Binomial Negativa (reajuste por sobredispersión)"
+author: "Nallely Taiba Pizarro"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+# ── IMPORTANTE ──────────────────────────────────────────────────────────────
+# Guarda este archivo en C:\Users\Lenovo\Downloads\ junto con sens_data.csv
+# Luego en la consola de RStudio escribe:
+#   setwd("C:/Users/Lenovo/Downloads")
+# Y presiona Knit
+# ────────────────────────────────────────────────────────────────────────────
+```
+
+## Librerías
+
+```{r librerias}
+library(tidyverse)
+library(glmmTMB)   # para Poisson y Binomial Negativa
+library(DHARMa)    # diagnóstico de residuos
+library(emmeans)   # comparaciones post hoc
+library(car)       # prueba de Wald tipo III
+```
+
+## Cargar y preparar datos
+
+```{r datos}
+sens <- read.csv("sens_data.csv", sep = ";", header = TRUE)
+
+flagelomeros <- names(sens)[3:ncol(sens)]
+
+sens_long <- pivot_longer(sens,
+                          cols      = all_of(flagelomeros),
+                          names_to  = "flagelomero",
+                          values_to = "n_sensillas")
+
+sens_long$sexo      <- ifelse(grepl("^M", sens_long$ID), "Macho", "Hembra")
+sens_long$vista     <- ifelse(grepl("V",  sens_long$ID), "Ventral", "Dorsal")
+sens_long$individuo <- paste0(
+                         ifelse(grepl("^M", sens_long$ID), "M", "H"),
+                         gsub("[^0-9]", "", sens_long$ID))
+
+sens_long$sexo        <- factor(sens_long$sexo,        levels = c("Macho", "Hembra"))
+sens_long$vista       <- factor(sens_long$vista,       levels = c("Ventral", "Dorsal"))
+sens_long$flagelomero <- factor(sens_long$flagelomero, levels = flagelomeros)
+sens_long$sens_type   <- factor(sens_long$sens_type)
+
+cat("Niveles sens_type:", levels(sens_long$sens_type), "\n")
+cat("Niveles vista:",     levels(sens_long$vista),     "\n")
+cat("Individuos:",        levels(factor(sens_long$individuo)), "\n")
+```
+
+## Ajuste de modelos finales
+
+# Estrategia:
+# - TR  → Poisson (sin sobredispersión según DHARMa, p = 0.760)
+# - BS, CH, TOTAL → Binomial Negativa (sobredispersión detectada por DHARMa)
+#
+# Distribución nbinom2 = binomial negativa con varianza cuadrática (más común)
+# Estructura del modelo: n_sensillas ~ sexo * vista + flagelomero + (1 | individuo)
+
+```{r modelos_finales}
+modelos_finales <- list()
+distribucion_usada <- c()
+
+for (tipo in levels(sens_long$sens_type)) {
+
+  sub <- sens_long[sens_long$sens_type == tipo, ]
+
+  if (tipo == "TR") {
+    # TR: sin sobredispersión → Poisson
+    mod <- glmmTMB(n_sensillas ~ sexo * vista + flagelomero + (1 | individuo),
+                   data   = sub,
+                   family = poisson(link = "log"))
+    distribucion_usada[tipo] <- "Poisson"
+
+  } else {
+    # BS, CH, TOTAL: sobredispersión → Binomial Negativa
+    mod <- glmmTMB(n_sensillas ~ sexo * vista + flagelomero + (1 | individuo),
+                   data   = sub,
+                   family = nbinom2(link = "log"))
+    distribucion_usada[tipo] <- "Binomial Negativa"
+  }
+
+  modelos_finales[[tipo]] <- mod
+
+  cat("\n", rep("=", 60), "\n")
+  cat("  MODELO FINAL - Tipo:", tipo,
+      "| Distribución:", distribucion_usada[tipo], "\n")
+  cat(rep("=", 60), "\n")
+  print(summary(mod))
+}
+```
+
+## Verificación de supuestos con DHARMa (modelos finales)
+
+```{r dharma_final, fig.width=10, fig.height=5}
+tabla_dharma_final <- data.frame(
+  Tipo             = character(),
+  Distribucion     = character(),
+  KS_p             = numeric(),
+  Dispersion_ratio = numeric(),
+  Dispersion_p     = numeric(),
+  Outliers_p       = numeric(),
+  Ajuste_OK        = character(),
+  stringsAsFactors = FALSE
+)
+
+for (tipo in levels(sens_long$sens_type)) {
+
+  cat("\n", rep("─", 55), "\n")
+  cat("  DHARMa verificación final:", tipo,
+      "| Dist:", distribucion_usada[tipo], "\n")
+  cat(rep("─", 55), "\n")
+
+  mod     <- modelos_finales[[tipo]]
+  sim_res <- simulateResiduals(fittedModel = mod, n = 500, plot = FALSE)
+
+  par(mfrow = c(1, 2))
+  plotQQunif(sim_res,    main = paste("QQ-plot final:", tipo))
+  plotResiduals(sim_res, main = paste("Residuos vs Predichos:", tipo))
+  par(mfrow = c(1, 1))
+
+  test_unif <- testUniformity(sim_res, plot = FALSE)
+  test_disp <- testDispersion(sim_res, plot = FALSE)
+  test_out  <- testOutliers(sim_res,   plot = FALSE)
+
+  cat(sprintf("  KS uniformidad: D = %.4f, p = %.4f\n",
+              test_unif$statistic, test_unif$p.value))
+  cat(sprintf("  Sobredispersión: ratio = %.4f, p = %.4f\n",
+              test_disp$statistic, test_disp$p.value))
+  cat(sprintf("  Outliers: p = %.4f\n", test_out$p.value))
+
+  ajuste <- ifelse(test_disp$p.value >= 0.05, "✅ OK", "⚠️ Revisar")
+  cat("  Ajuste:", ajuste, "\n")
+
+  tabla_dharma_final <- rbind(tabla_dharma_final, data.frame(
+    Tipo             = tipo,
+    Distribucion     = distribucion_usada[tipo],
+    KS_p             = round(test_unif$p.value,   4),
+    Dispersion_ratio = round(test_disp$statistic, 4),
+    Dispersion_p     = round(test_disp$p.value,   4),
+    Outliers_p       = round(test_out$p.value,    4),
+    Ajuste_OK        = ajuste
+  ))
+}
+
+cat("\n── TABLA DHARMa MODELOS FINALES ──────────────────────\n")
+print(tabla_dharma_final)
+```
+
+## Prueba de Wald tipo III (efectos fijos)
+
+```{r wald}
+tabla_wald <- data.frame(
+  Tipo         = character(),
+  Distribucion = character(),
+  Efecto       = character(),
+  Chi2         = numeric(),
+  Df           = numeric(),
+  p_valor      = numeric(),
+  Sig          = character(),
+  stringsAsFactors = FALSE
+)
+
+for (tipo in levels(sens_long$sens_type)) {
+
+  cat("\n", rep("=", 60), "\n")
+  cat("  Wald tipo III:", tipo,
+      "| Dist:", distribucion_usada[tipo], "\n")
+  cat(rep("=", 60), "\n")
+
+  mod  <- modelos_finales[[tipo]]
+  wald <- car::Anova(mod, type = "III")
+  print(wald)
+
+  # Guardar efectos principales (excluir flagelomero por ser covariable)
+  efectos_interes <- c("sexo", "vista", "sexo:vista")
+  for (ef in efectos_interes) {
+    if (ef %in% rownames(wald)) {
+      p <- wald[ef, "Pr(>Chisq)"]
+      sig <- ifelse(p < 0.001, "***",
+             ifelse(p < 0.01,  "**",
+             ifelse(p < 0.05,  "*", "ns")))
+      tabla_wald <- rbind(tabla_wald, data.frame(
+        Tipo         = tipo,
+        Distribucion = distribucion_usada[tipo],
+        Efecto       = ef,
+        Chi2         = round(wald[ef, "Chisq"], 3),
+        Df           = wald[ef, "Df"],
+        p_valor      = round(p, 4),
+        Sig          = sig
+      ))
+    }
+  }
+}
+
+cat("\n── TABLA RESUMEN WALD (efectos principales) ──────────\n")
+print(tabla_wald)
+```
+
+## Comparaciones post hoc con emmeans
+
+# Solo para los efectos significativos (sexo o interacción sexo × vista)
+
+```{r posthoc}
+for (tipo in levels(sens_long$sens_type)) {
+
+  mod  <- modelos_finales[[tipo]]
+  wald <- car::Anova(mod, type = "III")
+
+  p_sexo <- tryCatch(wald["sexo",     "Pr(>Chisq)"], error = function(e) 1)
+  p_int  <- tryCatch(wald["sexo:vista","Pr(>Chisq)"], error = function(e) 1)
+
+  if (p_sexo < 0.05 || p_int < 0.05) {
+
+    cat("\n", rep("─", 55), "\n")
+    cat("  Post hoc emmeans:", tipo, "\n")
+    cat(rep("─", 55), "\n")
+
+    if (p_int < 0.05) {
+      # Si la interacción es significativa → comparar sexo dentro de cada vista
+      em <- emmeans(mod, ~ sexo | vista, type = "response")
+      cat("Medias marginales por sexo y vista:\n")
+      print(em)
+      cat("\nComparaciones por pares (Bonferroni):\n")
+      print(pairs(em, adjust = "bonferroni"))
+    } else {
+      # Solo efecto principal de sexo
+      em <- emmeans(mod, ~ sexo, type = "response")
+      cat("Medias marginales por sexo:\n")
+      print(em)
+      cat("\nComparaciones por pares (Bonferroni):\n")
+      print(pairs(em, adjust = "bonferroni"))
+    }
+  } else {
+    cat("\n  [", tipo, "] Sin efectos significativos de sexo → sin post hoc\n")
+  }
+}
+```
+
+## Resumen final
+
+```{r resumen}
+cat("\n", rep("═", 65), "\n")
+cat("  RESUMEN FINAL\n")
+cat(rep("═", 65), "\n\n")
+
+for (tipo in levels(sens_long$sens_type)) {
+
+  mod  <- modelos_finales[[tipo]]
+  wald <- car::Anova(mod, type = "III")
+
+  p_sexo <- tryCatch(wald["sexo",      "Pr(>Chisq)"], error = function(e) NA)
+  p_vista <- tryCatch(wald["vista",     "Pr(>Chisq)"], error = function(e) NA)
+  p_int   <- tryCatch(wald["sexo:vista","Pr(>Chisq)"], error = function(e) NA)
+
+  cat("Tipo:", tipo, "| Distribución:", distribucion_usada[tipo], "\n")
+
+  cat(sprintf("  sexo:       p = %.4f  %s\n", p_sexo,
+              ifelse(!is.na(p_sexo) & p_sexo < 0.05, "✅ Sig.", "❌ NS")))
+  cat(sprintf("  vista:      p = %.4f  %s\n", p_vista,
+              ifelse(!is.na(p_vista) & p_vista < 0.05, "✅ Sig.", "❌ NS")))
+  cat(sprintf("  sexo×vista: p = %.4f  %s\n", p_int,
+              ifelse(!is.na(p_int) & p_int < 0.05, "✅ Sig.", "❌ NS")))
+  cat("\n")
+}
+```
