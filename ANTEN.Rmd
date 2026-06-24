@@ -1,0 +1,265 @@
+---
+title: "Antenomeros"
+author: "Nallely Taiba Pizarro"
+date: "2026-06-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#En este archivo vamos a determinar si existen diferencias morfologicas entre machos y hembras, con respecto a su antenomero. Primero, cargamos las librerías:
+```{r}
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+```
+#cargamos y preparamos los datos:
+```{r}
+data <- read.csv("anten_data.csv", sep = ";", dec = ",")
+ 
+cols_num <- c("MV1","MV2","MV3","MD1","MD2","MD3","HV1","HV2","HV3","HD1","HD2","HD3")
+data[cols_num] <- lapply(data[cols_num], function(x) as.numeric(gsub(",", ".", x)))
+ 
+
+data_long <- data %>%
+  pivot_longer(cols = all_of(cols_num),
+               names_to = "individuo",
+               values_to = "valor") %>%
+  mutate(
+    sexo    = factor(ifelse(grepl("^M", individuo), "Macho", "Hembra")),
+    replica = sub("[MH][VD]", "", individuo),
+    vista   = ifelse(grepl("V", individuo), "Ventral", "Dorsal")
+  )
+ 
+```
+#supuestos estadisticos:
+```{r}
+cat("\n=== PRUEBA DE NORMALIDAD (Shapiro-Wilk por Set y Sexo) ===\n")
+shapiro_res <- data_long %>%
+  group_by(Set, sexo) %>%
+  shapiro_test(valor)
+print(shapiro_res)
+ 
+cat("\n=== PRUEBA DE HOMOCEDASTICIDAD (Levene por Set) ===\n")
+levene_res <- data_long %>%
+  group_by(Set) %>%
+  levene_test(valor ~ sexo)
+print(levene_res)
+```
+#todos los valores son p<0,05, por lo que la distribucion de datos no es normal. Lo cual es esperado. Ahora ejecutaremos un test de wilcoxon.
+```{r}
+wilcoxon <- data_long %>%
+  group_by(Set) %>%
+  rstatix::wilcox_test(valor ~ sexo) %>%
+  rstatix::adjust_pvalue(method = "BH") %>%
+  rstatix::add_significance()
+print(wilcoxon)
+```
+#diferencias altamente significativas en el largo de los antenómeros, mas no así en ancho ni área: las hembras tienen antenómeros significativamente mas largos que los machos.
+```{r}
+data_long %>%
+  filter(Set == "LENGTH") %>%
+  group_by(sexo) %>%
+  summarise(mediana = median(valor, na.rm=TRUE),
+            media   = mean(valor, na.rm=TRUE),
+            DE      = sd(valor, na.rm=TRUE))
+data_long %>%
+  filter(Set == "LENGTH") %>%
+  rstatix::wilcox_effsize(valor ~ sexo)
+
+```
+#las hembras tienen antenomeros mas largos que los machos, con una mediana de 370,3 um y una media de 361,5 um, mientras que los machos tienen una mediana de 341,1 y una media de 323 um. Sin embargo, estas diferencias son significativas, pero el efecto = 0,267 es bajo.
+```{r}
+wilcox_anten <- data_long %>%
+  filter(Set == "LENGTH") %>%
+  group_by(FL) %>%
+  rstatix::wilcox_test(valor ~ sexo) %>%
+  rstatix::adjust_pvalue(method = "BH") %>%
+  rstatix::add_significance()
+print(wilcox_anten, n = Inf)
+```
+#F10, F13 y F14 son los responsables de esta diferencia significativa. 
+```{r}
+data_long %>%
+  filter(Set == "LENGTH", FL %in% c("F10", "F13", "F14")) %>%
+  ggplot(aes(x = FL, y = valor, fill = sexo)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(aes(color = sexo), position = position_jitterdodge(0.2), size = 2) +
+  scale_fill_manual(values = c("Macho" = "#2196F3", "Hembra" = "#E91E63")) +
+  scale_color_manual(values = c("Macho" = "#2196F3", "Hembra" = "#E91E63")) +
+  labs(title = "Antenómeros con diferencias significativas",
+       x = "Antenómero", y = "Largo (µm)", fill = "Sexo", color = "Sexo") +
+  theme_bw(base_size = 13)
+```
+
+#existe un valor extremo en F10, por lo que evaluaremos que individuo es:
+```{r}
+data_long %>%
+  filter(Set == "LENGTH", FL == "F10", sexo == "Hembra") %>%
+  arrange(desc(valor))
+```
+#el dato corresponde a HV2, correremos el mismo test sin ese valor para determinar si sigue siendo estadisticamente correcto:
+```{r}
+data_long %>%
+  filter(Set == "LENGTH", FL == "F10", sexo == "Hembra", individuo != "HV2") %>%
+  bind_rows(data_long %>% filter(Set == "LENGTH", FL == "F10", sexo == "Macho")) %>%
+  rstatix::wilcox_test(valor ~ sexo)
+```
+#"Se identificó un valor extremo en HV2 para F10 (555.0 µm); sin embargo, su exclusión no alteró la significancia del resultado (W = 28, p = 0.017), por lo que fue retenido en el análisis."
+```{r}
+# Perfil completo del flagelo (F2-F15)
+perfil <- data_long %>%
+  filter(Set == "LENGTH", grepl("^F", FL)) %>%
+  mutate(num_ant = as.numeric(sub("F", "", FL))) %>%
+  group_by(num_ant, FL, sexo) %>%
+  summarise(
+    media   = mean(valor, na.rm = TRUE),
+    mediana = median(valor, na.rm = TRUE),
+    ee      = sd(valor, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+
+# Antenómeros significativos para resaltar
+sig_ants <- c("F10", "F13", "F14")
+
+p_final <- ggplot(perfil, aes(x = num_ant, y = media, color = sexo, fill = sexo)) +
+  # Sombreado de antenómeros significativos
+  annotate("rect", xmin = 9.6,  xmax = 10.4, ymin = -Inf, ymax = Inf,
+           alpha = 0.12, fill = "gold") +
+  annotate("rect", xmin = 12.6, xmax = 13.4, ymin = -Inf, ymax = Inf,
+           alpha = 0.12, fill = "gold") +
+  annotate("rect", xmin = 13.6, xmax = 14.4, ymin = -Inf, ymax = Inf,
+           alpha = 0.12, fill = "gold") +
+  # Etiquetas de significancia
+  annotate("text", x = 10,  y = 490, label = "*", size = 7, color = "gray30") +
+  annotate("text", x = 13,  y = 490, label = "*", size = 7, color = "gray30") +
+  annotate("text", x = 14,  y = 490, label = "*", size = 7, color = "gray30") +
+  # Banda de error estándar
+  geom_ribbon(aes(ymin = media - ee, ymax = media + ee), alpha = 0.2, color = NA) +
+  # Línea de perfil
+  geom_line(size = 1.1) +
+  # Puntos
+  geom_point(size = 3, shape = 21, color = "white", stroke = 1.2) +
+  # Escalas
+  scale_color_manual(values = c("Macho" = "#2196F3", "Hembra" = "#E91E63")) +
+  scale_fill_manual(values  = c("Macho" = "#2196F3", "Hembra" = "#E91E63")) +
+  scale_x_continuous(breaks = 2:15, labels = paste0("F", 2:15)) +
+  # Etiquetas
+  labs(
+    title    = "Perfil morfométrico de antenomeros por sexo: largo de flagelómero",
+        x        = "Flagelómero",
+    y        = "Largo (µm)",
+    color    = "Sexo",
+    fill     = "Sexo"
+  ) +
+  # Tema
+  theme_bw(base_size = 13) +
+  theme(
+    plot.title      = element_text(face = "bold", size = 14),
+    plot.subtitle   = element_text(size = 10, color = "gray40"),
+    axis.text.x     = element_text(angle = 45, hjust = 1),
+    legend.position = "right",
+    panel.grid.minor = element_blank()
+  )
+
+print(p_final)
+ggsave("perfil_flagelo_final.png", p_final, width = 12, height = 6, dpi = 300)
+```
+```{r}
+cols_num <- c("MV1","MV2","MV3","MD1","MD2","MD3",
+              "HV1","HV2","HV3","HD1","HD2","HD3")
+
+data[cols_num] <- lapply(data[cols_num], function(x) {
+  as.numeric(gsub(",", ".", x))
+})
+
+data_long <- data %>%
+  pivot_longer(
+    cols      = all_of(cols_num),
+    names_to  = "individuo",
+    values_to = "valor"
+  ) %>%
+  mutate(
+    sexo = factor(ifelse(grepl("^M", individuo), "Macho", "Hembra"),
+                  levels = c("Macho", "Hembra")),
+    vista = ifelse(grepl("V", individuo), "Ventral", "Dorsal")
+  )
+
+data_long <- data_long %>%
+  mutate(Set_label = case_when(
+    Set == "AREA"   ~ "Área (µm²)",
+    Set == "LENGTH" ~ "Largo (µm)",
+    Set == "WIDTH"  ~ "Ancho (µm)"
+  ),
+  Set_label = factor(Set_label,
+                     levels = c("Largo (µm)", "Ancho (µm)", "Área (µm²)")))
+
+figura1 <- data_long %>%
+  filter(!is.na(Set_label)) %>%
+  ggplot(aes(x = sexo, y = valor, fill = sexo)) +
+  geom_boxplot(outlier.shape = 21, outlier.size = 2,
+               alpha = 0.8, width = 0.5) +
+  geom_jitter(width = 0.15, alpha = 0.3, size = 1) +
+  facet_wrap(~ Set_label, scales = "free_y") +
+  stat_compare_means(
+    method       = "wilcox.test",
+    label        = "p.signif",
+    comparisons  = list(c("Macho", "Hembra")),
+    bracket.size = 0.5,
+    tip.length   = 0.02,
+    size         = 5
+  ) +
+  scale_fill_manual(values = c("Macho" = "#2196F3", "Hembra" = "#E91E63")) +
+  labs(
+    title    = "Morfometría antenomérica por sexo",
+    subtitle = expression(italic("Euborellia annulipes")),
+    x        = NULL,
+    y        = "Valor",
+    fill     = "Sexo"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    plot.title      = element_text(face = "bold", size = 14),
+    plot.subtitle   = element_text(size = 11, color = "gray40"),
+    legend.position = "bottom",
+    strip.text      = element_text(face = "bold", size = 11),
+    panel.grid.minor = element_blank()
+  )
+
+print(figura1)
+
+```
+#Comparación del largo, ancho y área de los flagelómeros entre machos y hembras de Euborellia annulipes. Se muestran diagramas de caja con los valores individuales superpuestos  para cada variable morfométrica (AREA, LENGTH, WIDTH). Azul: machos; rosado: hembras. *** p < 0.001; ns: no significativo (prueba de Wilcoxon-Mann-Whitney con corrección de Benjamini-Hochberg).
+```{r}
+datos_glmm <- data_long %>%
+  filter(Set == "LENGTH", grepl("^F", FL)) %>%
+  mutate(num_ant = as.numeric(sub("F", "", FL)),
+         vista   = factor(vista),
+         sexo    = factor(sexo, levels = c("Macho", "Hembra")))
+
+# Modelo 1: solo sexo y posición
+m1 <- lm(valor ~ sexo * num_ant, data = datos_glmm)
+
+# Modelo 2: agregando vista
+m2 <- lm(valor ~ sexo * num_ant + vista, data = datos_glmm)
+
+# Modelo 3: con interacción sexo x vista
+m3 <- lm(valor ~ sexo * num_ant + sexo * vista, data = datos_glmm)
+
+# Comparar modelos
+AIC(m1, m2, m3)
+BIC(m1, m2, m3)
+```
+#El test GLMM comparando 3 modelos: m1 = sexo * num_ant, m2 = vista (dorsal, ventral), m3 = sexo * vista.
+#el modelo m3 se indica como el mejor, esto nos da como resultado que la diferencia sexual no es la misma en mediciones ventrales y dorsales.
+```{r}
+summary(m3)
+anova(m3)
+```
+#R2 = 0,62, el modelo explica el 62% de la varianza en el largo de los antenómeros.
+#F(5,162) = 53.26, p < 2.2e-16. El modelo en conjunto es altamente significativo.  
+# La vista ventral en hembras son 34 µm más largas que las hembras dorsales.
+#Esta asimetría solo existe en hembras.
+
+#conclusiones: el test demuestra diferencias significativas en los flagelómeros F10, F13 Y F14 de los antenómeros estudiados. En especifico, esto muestra que el largo de las hembras en esas regiones tienen a ser significativamente mas largos en comparacion con los machos.Por otro lado, la prueba de normalidad indicó que los datos no cumplen con normalidad, esto se podría deber a la cantidad de individuos medidos durante este estudio, sin embargo, los resultados muestra una clara diferencia entre los flagelómeros anteriormente mencionados.

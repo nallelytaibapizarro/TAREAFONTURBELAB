@@ -1,0 +1,205 @@
+---
+title: "24-06"
+author: "Nallely Taiba Pizarro"
+date: "2026-06-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##En este archivo RMD se presenta la comparacion de sensillas.Llamamos a los paquetes que necesitamos:
+```{r}
+library(tidyverse)
+library(rstatix)    
+library(ggpubr)      
+library(car)
+library(coin)
+library(glmmTMB)
+```
+
+#cargamos los datos:
+```{r}
+data <- read.csv2("sens_data.csv", sep = ";", header = TRUE)
+```
+
+#se debe cambiar la matriz para poder correr las pruebas necesarias:
+```{r}
+cat("Dimensiones:", dim(data), "\n")
+cat("Columnas:", names(data), "\n")
+
+flagelomeros <- names(data)[3:ncol(data)]  
+cat("Flagelómeros detectados:", flagelomeros, "\n")
+
+data_long <- data %>%
+  pivot_longer(
+    cols      = all_of(flagelomeros),
+    names_to  = "flagelomero",
+    values_to = "n_sensillas"
+  ) %>%
+  mutate(
+    sexo = case_when(
+      str_starts(ID, "M") ~ "Macho",
+      str_starts(ID, "H") ~ "Hembra"
+    ),
+    flagelomero = factor(flagelomero, levels = flagelomeros),
+    sexo        = factor(sexo, levels = c("Macho", "Hembra")),
+    sens_type   = factor(sens_type)
+  )
+
+  
+```
+
+#ok, ahora un poco de estadistica descriptiva:
+```{r}
+descriptive <- data_long %>%
+  group_by(sexo, sens_type) %>%
+  summarise(
+    n        = n(),
+    media    = mean(n_sensillas, na.rm = TRUE),
+    mediana  = median(n_sensillas, na.rm = TRUE),
+    DE       = sd(n_sensillas, na.rm = TRUE),
+    min      = min(n_sensillas, na.rm = TRUE),
+    max      = max(n_sensillas, na.rm = TRUE),
+    .groups  = "drop"
+  )
+ 
+print(descriptive)
+ 
+descriptive_flag <- data_long %>%
+  group_by(sexo, sens_type, flagelomero) %>%
+  summarise(
+    media = mean(n_sensillas, na.rm = TRUE),
+    DE    = sd(n_sensillas, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+#ahora un test de normalidad, Shapiro Wilk
+```{r}
+normalidad <- data_long %>%
+  group_by(sexo, sens_type) %>%
+  shapiro_test(n_sensillas)
+ 
+print(normalidad)
+```
+
+#Los datos no son normales, por lo que se usará una prueba no-paramétrica (Wilcoxon):
+```{r}
+wilcoxon <- data_long %>%
+  group_by(sens_type) %>%
+  rstatix::wilcox_test(n_sensillas ~ sexo) %>%
+  rstatix::adjust_pvalue(method = "bonferroni") %>%
+  rstatix::add_significance()
+
+print(wilcoxon %>% select(sens_type, statistic, p, p.adj, p.adj.signif))
+
+ef <- data_long %>%
+  group_by(sens_type) %>%
+  rstatix::wilcox_effsize(n_sensillas ~ sexo)
+
+print(ef %>% select(sens_type, effsize, magnitude))
+```
+
+#p>0,5, por lo que no existen diferencias significativas. Ahora: las diferencias totales
+#si podrian ser significativas, sin embargo, al enfrentarlo a bonferroni indica que 
+#las diferencias son debiles estadisticamente.
+#todos tienen magnitud de diferencia = SMALL, esperable con la cantidad de individuos.
+#Ahora graficaremos:
+```{r}
+p1 <- data_long %>%
+  ggplot(aes(x = sexo, y = n_sensillas, fill = sexo)) +
+  geom_boxplot(outlier.shape = 21, alpha = 0.8) +
+  geom_jitter(width = 0.15, alpha = 0.3, size = 0.8) +
+  facet_wrap(~sens_type, scales = "free_y") +
+  scale_fill_manual(values = c("Macho" = "#4472C4", "Hembra" = "#ED7D31")) +
+  stat_compare_means(method = "wilcox.test", label = "p.signif",
+                     comparisons = list(c("Macho", "Hembra"))) +
+  labs(
+    title    = "Comparación de sensillas: Machos vs Hembras",
+      x = NULL, y = "Número de sensillas", fill = "Sexo"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(legend.position = "bottom")
+print(p1)
+```
+
+```{r}
+p2 <- descriptive_flag %>%
+  ggplot(aes(x = flagelomero, y = media, color = sexo, group = sexo)) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2) +
+  geom_ribbon(aes(ymin = media - DE, ymax = media + DE, fill = sexo),
+              alpha = 0.15, color = NA) +
+  facet_wrap(~sens_type, scales = "free_y") +
+  scale_color_manual(values = c("Macho" = "#4472C4", "Hembra" = "#ED7D31")) +
+  scale_fill_manual(values  = c("Macho" = "#4472C4", "Hembra" = "#ED7D31")) +
+  labs(
+    title    = "Sensillas por sección",
+    x = "Flagelómero", y = "Número de sensillas",
+    color = "Sexo", fill = "Sexo"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    axis.text.x    = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+print(p2)
+```
+
+#no hay diferencias entre machos y hembras. Sin embargo, queda la discusión del tamaño muestral: un aumento de este podría mostrar otro tipo de resultados
+```{r}
+sens <- read.csv("sens_data.csv", sep = ";", header = TRUE)
+
+
+flagelomeros <- names(sens)[3:ncol(sens)]
+
+
+sens_long <- pivot_longer(sens,
+                          cols = all_of(flagelomeros),
+                          names_to = "flagelomero",
+                          values_to = "n_sensillas")
+
+
+sens_long$sexo      <- ifelse(grepl("^M", sens_long$ID), "Macho", "Hembra")
+sens_long$vista     <- ifelse(grepl("V", sens_long$ID), "Ventral", "Distal")
+sens_long$individuo <- paste0(
+                         ifelse(grepl("^M", sens_long$ID), "M", "H"),
+                         gsub("[^0-9]", "", sens_long$ID))
+
+
+sens_long$sexo       <- factor(sens_long$sexo, levels = c("Macho", "Hembra"))
+sens_long$vista      <- factor(sens_long$vista, levels = c("Ventral", "Distal"))
+sens_long$flagelomero <- factor(sens_long$flagelomero, levels = flagelomeros)
+sens_long$sens_type  <- factor(sens_long$sens_type)
+
+
+head(sens_long)
+```
+#corremos un GLMM para obtener un resultado mas robusto con la cantidad de datos que tenemos.
+```{r}
+
+for (tipo in levels(sens_long$sens_type)) {
+  
+  sub <- sens_long[sens_long$sens_type == tipo, ]
+  
+  modelo <- glmmTMB(n_sensillas ~ sexo * vista + flagelomero + (1 | individuo),
+                    data   = sub,
+                    family = poisson)
+  
+  cat("\n============================================================\n")
+  cat(sprintf("  GLMM - Tipo: %s\n", tipo))
+  cat("============================================================\n")
+  print(summary(modelo))
+}
+```
+#Las hembras tienen, en terminos generales, menos sensillas que loa machos. Esto fue significante tanto en sensillas CH como en el total.
+#Con respecto a las mediciones distal/ventral: la vista distal tiene menos BS.
+
+#Conclusion: El GLMM confirma y enriquece los resultados del Wilcoxon. CH (sensillas chaeticas) sigue siendo el tipo con diferencias sexuales más claras. Por otro lado, la vista vista de medición indica una diferencia sexo × vista en tres de los cuatro tipos. Esto no era detectable con el Wilcoxon.
+
+
+
+
+
